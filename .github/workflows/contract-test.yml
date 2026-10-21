@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Check out public test repository only
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Run isolated contract tests
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
