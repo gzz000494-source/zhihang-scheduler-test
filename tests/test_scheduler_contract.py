@@ -1,4 +1,9 @@
-"""Isolated scheduler-trigger contract model. NOT production authentication code."""
+"""Isolated scheduler-trigger contract model.
+
+This is a test model only, NOT production authentication code. In particular,
+seen_nonces is in-memory and is not suitable for multi-instance production
+replay prevention.
+"""
 
 import hashlib
 import hmac
@@ -25,7 +30,7 @@ def verify_request(
     max_skew_seconds: int = 300,
 ) -> bool:
     """Simulate a narrow allowlist, freshness, signature, and replay check."""
-    if task not in ALLOWED_TASKS or not nonce:
+    if not secret or task not in ALLOWED_TASKS or not nonce or not nonce.strip():
         return False
     if abs(now - timestamp) > max_skew_seconds:
         return False
@@ -46,17 +51,20 @@ class SchedulerContractTests(unittest.TestCase):
         self.task = "health_check"
         self.seen = set()
 
-    def call(self, *, timestamp=None, nonce=None, task=None, signature=None):
+    def call(
+        self, *, secret=None, timestamp=None, nonce=None, task=None, signature=None
+    ):
+        secret = self.secret if secret is None else secret
         timestamp = self.now if timestamp is None else timestamp
         nonce = self.nonce if nonce is None else nonce
         task = self.task if task is None else task
         signature = (
-            signature_for(self.secret, timestamp, nonce, task)
+            signature_for(secret, timestamp, nonce, task)
             if signature is None
             else signature
         )
         return verify_request(
-            secret=self.secret,
+            secret=secret,
             timestamp=timestamp,
             nonce=nonce,
             task=task,
@@ -73,12 +81,36 @@ class SchedulerContractTests(unittest.TestCase):
         self.assertFalse(self.call(signature="0" * 64))
         self.assertEqual(self.seen, set())
 
+    def test_signature_must_bind_timestamp(self):
+        old_signature = signature_for(
+            self.secret, self.now - 1, self.nonce, self.task
+        )
+        self.assertFalse(self.call(timestamp=self.now, signature=old_signature))
+        self.assertEqual(self.seen, set())
+
+    def test_signature_must_bind_task(self):
+        other_task_signature = signature_for(
+            self.secret, self.now, self.nonce, "run_production_scheduler"
+        )
+        self.assertFalse(self.call(signature=other_task_signature))
+        self.assertEqual(self.seen, set())
+
     def test_stale_timestamp_is_rejected(self):
         self.assertFalse(self.call(timestamp=self.now - 301))
+        self.assertFalse(self.call(timestamp=self.now + 301))
         self.assertEqual(self.seen, set())
 
     def test_unapproved_task_is_rejected(self):
         self.assertFalse(self.call(task="run_production_scheduler"))
+        self.assertEqual(self.seen, set())
+
+    def test_empty_secret_is_rejected(self):
+        self.assertFalse(self.call(secret=""))
+        self.assertEqual(self.seen, set())
+
+    def test_empty_or_whitespace_nonce_is_rejected(self):
+        self.assertFalse(self.call(nonce=""))
+        self.assertFalse(self.call(nonce="   "))
         self.assertEqual(self.seen, set())
 
     def test_replayed_nonce_is_rejected(self):
